@@ -369,6 +369,52 @@
       <div class="wallet-sub">Practice balance, saved on this device</div>
       <div id="walletHistory" class="wallet-history"></div>
       <button class="wallet-withdraw" id="withdrawBtn" disabled>Withdraw &mdash; coming soon</button>
+      <!-- Add this inside your existing wallet-card div -->
+<div class="solana-wallet" style="margin-top:12px;padding:12px;background:rgba(149,128,255,0.08);border:1px solid rgba(149,128,255,0.25);border-radius:10px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <span style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#9580ff;font-weight:600;">Solana</span>
+    <span id="solBalance" style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#eaeee9;">Not connected</span>
+  </div>
+  
+  <button id="connectPhantomBtn" style="width:100%;padding:10px;border-radius:8px;border:none;background:linear-gradient(180deg,#a78bfa,#8b5cf6);color:#fff;font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:10px;">Connect Phantom</button>
+  
+  <div id="solanaActions" style="display:none;gap:8px;">
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <button id="showDepositBtn" style="flex:1;padding:8px;border-radius:8px;border:none;background:linear-gradient(180deg,#a78bfa,#8b5cf6);color:#fff;font-size:12px;font-weight:600;cursor:pointer;">Deposit</button>
+      <button id="showWithdrawBtn" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#eaeee9;font-size:12px;font-weight:600;cursor:pointer;">Withdraw</button>
+    </div>
+  </div>
+</div>
+
+<!-- Deposit Modal -->
+<div id="depositModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100;align-items:center;justify-content:center;">
+  <div style="background:#1a2224;padding:24px;border-radius:16px;max-width:350px;width:90%;border:1px solid rgba(149,128,255,0.3);">
+    <h3 style="color:#9580ff;margin-bottom:16px;">Deposit SOL</h3>
+    <div style="background:#fff;padding:12px;border-radius:8px;margin-bottom:16px;text-align:center;">
+      <div id="solanaQR" style="width:150px;height:150px;margin:0 auto;background:#000;"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <input id="depositAddress" readonly style="flex:1;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#eaeee9;font-family:'JetBrains Mono',monospace;font-size:11px;">
+      <button onclick="copySolAddress()" style="padding:10px;border-radius:6px;border:none;background:rgba(255,255,255,0.1);color:#eaeee9;cursor:pointer;">Copy</button>
+    </div>
+    <div style="font-size:11px;color:#7c8a82;margin-bottom:16px;">
+      Send SOL to this address. Your balance will update automatically.
+    </div>
+    <input type="text" id="txSignature" placeholder="Paste transaction signature here" style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#eaeee9;margin-bottom:12px;">
+    <button onclick="verifyDeposit()" style="width:100%;padding:12px;border-radius:8px;border:none;background:linear-gradient(180deg,#a78bfa,#8b5cf6);color:#fff;font-weight:700;cursor:pointer;">Verify Deposit</button>
+    <button onclick="closeDepositModal()" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#7c8a82;cursor:pointer;">Cancel</button>
+  </div>
+</div>
+
+<!-- Withdraw Modal -->
+<div id="withdrawModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100;align-items:center;justify-content:center;">
+  <div style="background:#1a2224;padding:24px;border-radius:16px;max-width:350px;width:90%;border:1px solid rgba(149,128,255,0.3);">
+    <h3 style="color:#9580ff;margin-bottom:16px;">Withdraw SOL</h3>
+    <input type="number" id="withdrawAmount" placeholder="SOL amount" step="0.001" min="0.001" style="width:100%;padding:12px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#eaeee9;margin-bottom:12px;">
+    <button onclick="processWithdrawal()" style="width:100%;padding:12px;border-radius:8px;border:none;background:linear-gradient(180deg,#a78bfa,#8b5cf6);color:#fff;font-weight:700;cursor:pointer;">Withdraw</button>
+    <button onclick="closeWithdrawModal()" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:#7c8a82;cursor:pointer;">Cancel</button>
+  </div>
+</div>
     </div>
 
     <div class="buyin-wrap">
