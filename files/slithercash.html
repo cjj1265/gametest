@@ -1893,6 +1893,187 @@ renderWalletUI();
 runLoadingScreen();
 
 })();
+  // ==================== SOLANA WALLET INTEGRATION ====================
+
+let solanaProvider = null;
+let solanaPublicKey = null;
+let depositAddress = null;
+
+// Check if Phantom is installed
+function checkPhantom() {
+  const isPhantomInstalled = window.solana && window.solana.isPhantom;
+  if (!isPhantomInstalled) {
+    alert('Please install Phantom wallet: phantom.app');
+    window.open('https://phantom.app/', '_blank');
+    return false;
+  }
+  return true;
+}
+
+// Connect Phantom
+document.getElementById('connectPhantomBtn').addEventListener('click', async () => {
+  if (!checkPhantom()) return;
+  
+  try {
+    solanaProvider = window.solana;
+    const resp = await solanaProvider.connect();
+    solanaPublicKey = resp.publicKey.toString();
+    
+    // Update UI
+    document.getElementById('connectPhantomBtn').style.display = 'none';
+    document.getElementById('solanaActions').style.display = 'block';
+    document.getElementById('solBalance').textContent = 'Connected';
+    
+    // Get deposit address from server
+    const response = await fetch('/api/deposit-address');
+    const data = await response.json();
+    depositAddress = data.address;
+    
+    // Listen for account changes
+    solanaProvider.on('accountChanged', (newPublicKey) => {
+      if (newPublicKey) {
+        solanaPublicKey = newPublicKey.toString();
+      } else {
+        location.reload();
+      }
+    });
+    
+  } catch (err) {
+    alert('Connection failed: ' + err.message);
+  }
+});
+
+// Show deposit modal
+document.getElementById('showDepositBtn').addEventListener('click', async () => {
+  if (!depositAddress) {
+    const response = await fetch('/api/deposit-address');
+    const data = await response.json();
+    depositAddress = data.address;
+  }
+  
+  document.getElementById('depositAddress').value = depositAddress;
+  document.getElementById('solanaQR').innerHTML = 
+    `<img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=solana:${depositAddress}" style="width:150px;height:150px;">`;
+  document.getElementById('depositModal').style.display = 'flex';
+});
+
+function closeDepositModal() {
+  document.getElementById('depositModal').style.display = 'none';
+}
+
+function copySolAddress() {
+  const addr = document.getElementById('depositAddress');
+  addr.select();
+  document.execCommand('copy');
+  alert('Address copied!');
+}
+
+// Verify deposit
+async function verifyDeposit() {
+  const txSignature = document.getElementById('txSignature').value.trim();
+  if (!txSignature) {
+    alert('Enter transaction signature');
+    return;
+  }
+  
+  // Get player ID from your existing game
+  const playerId = player ? player.id : 'guest';
+  
+  try {
+    const response = await fetch('/api/verify-deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        txSignature,
+        playerId: playerId
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      alert(`Deposit confirmed! Added $${data.credits} credits`);
+      // Add to your existing game wallet
+      wallet += data.credits;
+      saveWallet();
+      renderWalletUI();
+      closeDepositModal();
+    } else {
+      alert('Deposit failed: ' + data.error);
+    }
+    
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// Show withdraw modal
+document.getElementById('showWithdrawBtn').addEventListener('click', () => {
+  if (!solanaPublicKey) {
+    alert('Connect wallet first');
+    return;
+  }
+  document.getElementById('withdrawModal').style.display = 'flex';
+});
+
+function closeWithdrawModal() {
+  document.getElementById('withdrawModal').style.display = 'none';
+}
+
+// Process withdrawal
+async function processWithdrawal() {
+  const amount = parseFloat(document.getElementById('withdrawAmount').value);
+  if (!amount || amount <= 0) {
+    alert('Enter valid amount');
+    return;
+  }
+  
+  // Check game balance (1 SOL = 100 credits)
+  const creditsNeeded = amount * 100;
+  if (wallet < creditsNeeded) {
+    alert('Insufficient game balance');
+    return;
+  }
+  
+  const playerId = player ? player.id : 'guest';
+  
+  try {
+    const response = await fetch('/api/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playerAddress: solanaPublicKey,
+        solAmount: amount,
+        playerId: playerId
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      alert(`Withdrawal successful! Sent ${data.solAmount} SOL`);
+      wallet -= creditsNeeded;
+      saveWallet();
+      renderWalletUI();
+      closeWithdrawModal();
+    } else {
+      alert('Withdrawal failed: ' + data.error);
+    }
+    
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+// Auto-connect if already connected
+if (window.solana && window.solana.isPhantom) {
+  window.solana.connect({ onlyIfTrusted: true }).then((resp) => {
+    if (resp.publicKey) {
+      solanaPublicKey = resp.publicKey.toString();
+      document.getElementById('connectPhantomBtn').click();
+    }
+  }).catch(() => {});
+}
 </script>
 </body>
 </html>
