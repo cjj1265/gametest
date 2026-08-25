@@ -1913,7 +1913,7 @@ document.getElementById('connectPhantomBtn').addEventListener('click', async () 
     solanaPublicKey = resp.publicKey.toString();
     
     // Get player ID from game
-    const playerId = player ? player.id : solanaPublicKey.slice(0, 8);
+    const playerId = solanaPublicKey.slice(0, 16);
     
     // Get deposit address from server
     const response = await fetch(`/api/player-deposit-address?playerId=${playerId}`);
@@ -2039,7 +2039,7 @@ async function processWithdrawal() {
   const amount = parseFloat(document.getElementById('withdrawAmount').value);
   if (!amount || amount <= 0) return alert('Enter valid amount');
   
-  const playerId = player ? player.id : solanaPublicKey?.slice(0, 8);
+  const playerId = solanaPublicKey ? solanaPublicKey.slice(0, 16) : 'guest';
   
   try {
     const response = await fetch('/api/withdraw', {
