@@ -35,9 +35,6 @@ const MAX_NAME_LEN = 16;
 const solana = new SolanaWallet();
 console.log('Game wallet address:', solana.getDepositAddress());
 
-// In-memory player balances (replace with database in production)
-const playerCryptoBalances = new Map(); // playerId -> { solBalance, gameCredits }
-
 // Flat layout — every file lives together in one folder, no subfolders:
 //   slithercash/
 //     slithercash.html
@@ -72,65 +69,57 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
 
-  // Solana API endpoints
-  if (req.url === '/api/deposit-address' && req.method === 'GET') {
+  // ==================== SOLANA API ENDPOINTS (AUTOMATIC) ====================
+
+  // Get or create player's unique deposit address
+  if (req.url.startsWith('/api/player-deposit-address') && req.method === 'GET') {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    const playerId = url.searchParams.get('playerId') || 'guest';
+    const address = solana.getPlayerDepositAddress(playerId);
+    const balance = solana.getPlayerBalance(playerId);
+    
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
-      address: solana.getDepositAddress(),
-      network: 'devnet',
-      minDeposit: 0.01,
+      success: true,
+      address: address,
+      balance: balance.credits,
+      solBalance: balance.sol,
       rate: '1 SOL = 100 credits'
     }));
     return;
   }
 
-  if (req.url === '/api/verify-deposit' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        const data = JSON.parse(body);
-        const result = await solana.checkDeposit(data.txSignature, data.playerId);
-        
-        if (result.valid) {
-          // Add credits to player
-          const current = playerCryptoBalances.get(data.playerId) || { solBalance: 0, gameCredits: 0 };
-          current.solBalance += result.solAmount;
-          current.gameCredits += result.credits;
-          playerCryptoBalances.set(data.playerId, current);
-          
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            success: true,
-            solAmount: result.solAmount,
-            credits: result.credits,
-            message: `Deposited ${result.solAmount} SOL = ${result.credits} credits`
-          }));
-        } else {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: result.error }));
-        }
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+  // Get player balance (poll this from game)
+  if (req.url.startsWith('/api/player-balance') && req.method === 'GET') {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    const playerId = url.searchParams.get('playerId') || 'guest';
+    const balance = solana.getPlayerBalance(playerId);
+    
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      balance: {
+        sol: balance.sol,
+        credits: balance.credits,
+        address: balance.address
       }
-    });
+    }));
     return;
   }
 
+  // Process withdrawal
   if (req.url === '/api/withdraw' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', async () => {
       try {
         const data = JSON.parse(body);
-        const playerBalance = playerCryptoBalances.get(data.playerId);
+        const playerBalance = solana.getPlayerBalance(data.playerId);
         
-        // Check if player has enough credits (1 SOL = 100 credits)
-        const creditsNeeded = data.solAmount * 100;
-        if (!playerBalance || playerBalance.gameCredits < creditsNeeded) {
+        // Check if player has enough SOL
+        if (playerBalance.sol < data.solAmount) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Insufficient credits' }));
+          res.end(JSON.stringify({ success: false, error: 'Insufficient SOL balance' }));
           return;
         }
         
@@ -138,10 +127,8 @@ const httpServer = http.createServer((req, res) => {
         const result = await solana.withdraw(data.playerAddress, data.solAmount);
         
         if (result.success) {
-          // Deduct from player balance
-          playerBalance.gameCredits -= creditsNeeded;
-          playerBalance.solBalance -= data.solAmount;
-          playerCryptoBalances.set(data.playerId, playerBalance);
+          // Deduct from player
+          solana.deductPlayerBalance(data.playerId, data.solAmount);
           
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -162,17 +149,19 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
 
+  // Admin: Get game wallet info
   if (req.url === '/api/game-wallet' && req.method === 'GET') {
-    solana.getGameBalance().then(balance => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        address: solana.getDepositAddress(),
-        balance,
-        network: 'devnet'
-      }));
-    });
+    const balance = await solana.getGameBalance();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      address: solana.getDepositAddress(),
+      balance,
+      network: 'devnet'
+    }));
     return;
   }
+
+  // ==================== END SOLANA ENDPOINTS ====================
 
   if (req.url === '/' || req.url === '/index.html' || req.url === '/slithercash.html') {
     fs.readFile(CLIENT_HTML_PATH, (err, data) => {
@@ -247,11 +236,6 @@ function handleMessage(connId, msg) {
       const playerId = connId; // reuse the connection id as the snake id — simple and unique
       world.addPlayer({ id: playerId, name, buyin, skinIndex });
       session.playerId = playerId;
-      
-      // Initialize crypto balance for this player
-      if (!playerCryptoBalances.has(playerId)) {
-        playerCryptoBalances.set(playerId, { solBalance: 0, gameCredits: 0 });
-      }
       
       session.conn.send({
         t: 'welcome',
