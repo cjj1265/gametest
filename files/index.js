@@ -147,17 +147,7 @@ const httpServer = http.createServer((req, res) => {
       }
     });
     return;
-  }
 
-  // Admin: Get game wallet info
-  if (req.url === '/api/game-wallet' && req.method === 'GET') {
-    const balance = await solana.getGameBalance();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      address: solana.getDepositAddress(),
-      balance,
-      network: 'devnet'
-    }));
     return;
   }
 
