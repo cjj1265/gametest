@@ -1,12 +1,8 @@
-const { Connection, PublicKey, Keypair, LAMPORTS_PER_SOL, SystemProgram, Transaction } = require('@solana/web3.js');
+const { Connection, PublicKey, Keypair, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 
-// CONFIG - CHANGE THESE
-const SOLANA_NETWORK = 'devnet'; // 'mainnet-beta' for real money
-const GAME_WALLET_SECRET = process.env.GAME_WALLET_SECRET; // Your game wallet private key
-const MIN_DEPOSIT = 0.01; // Minimum deposit in SOL
-const SOL_TO_CREDITS = 100; // 1 SOL = $100 game credits
+const SOLANA_NETWORK = 'devnet'; // or 'mainnet-beta'
+const GAME_WALLET_SECRET = process.env.GAME_WALLET_SECRET;
 
-// Connect to Solana
 const connection = new Connection(
   `https://api.${SOLANA_NETWORK}.solana.com`,
   'confirmed'
@@ -18,62 +14,127 @@ if (GAME_WALLET_SECRET) {
   const secretKey = Uint8Array.from(JSON.parse(GAME_WALLET_SECRET));
   gameWallet = Keypair.fromSecretKey(secretKey);
 } else {
-  // Generate new wallet if none exists (for testing)
   gameWallet = Keypair.generate();
-  console.log('Generated new game wallet:', gameWallet.publicKey.toString());
-  console.log('Save this secret key:', JSON.stringify(Array.from(gameWallet.secretKey)));
+  console.log('Generated game wallet:', gameWallet.publicKey.toString());
+  console.log('SECRET:', JSON.stringify(Array.from(gameWallet.secretKey)));
 }
 
-// Store pending deposits (in production, use a database)
-const pendingDeposits = new Map();
+// Track player deposit addresses
+const playerDepositAddresses = new Map(); // playerId -> { address, secret, balance }
 
 class SolanaWallet {
   constructor() {
     this.gameWalletAddress = gameWallet.publicKey.toString();
+    this.knownSignatures = new Set(); // Track processed transactions
+    
+    // Start watching for deposits
+    this.startWatching();
   }
 
-  // Get game wallet address for deposits
   getDepositAddress() {
     return this.gameWalletAddress;
   }
 
-  // Check if a transaction is a valid deposit
-  async checkDeposit(txSignature, playerId) {
-    try {
-      const tx = await connection.getTransaction(txSignature);
-      
-      if (!tx) return { valid: false, error: 'Transaction not found' };
-      
-      // Check if transaction was to game wallet
-      const accounts = tx.transaction.message.accountKeys;
-      const destination = accounts[1]?.toString();
-      
-      if (destination !== this.gameWalletAddress) {
-        return { valid: false, error: 'Not sent to game wallet' };
-      }
-
-      // Get amount
-      const amount = tx.meta.postBalances[1] - tx.meta.preBalances[1];
-      const solAmount = amount / LAMPORTS_PER_SOL;
-
-      if (solAmount < MIN_DEPOSIT) {
-        return { valid: false, error: 'Below minimum deposit' };
-      }
-
-      // Calculate credits
-      const credits = solAmount * SOL_TO_CREDITS;
-
-      return {
-        valid: true,
-        solAmount,
-        credits,
-        txSignature
-      };
-
-    } catch (err) {
-      console.error('Check deposit error:', err);
-      return { valid: false, error: err.message };
+  // Generate unique deposit address for each player
+  getPlayerDepositAddress(playerId) {
+    if (playerDepositAddresses.has(playerId)) {
+      return playerDepositAddresses.get(playerId).address;
     }
+
+    // Create new address for this player
+    const newWallet = Keypair.generate();
+    const playerData = {
+      address: newWallet.publicKey.toString(),
+      secret: JSON.stringify(Array.from(newWallet.secretKey)),
+      balance: 0,
+      playerId: playerId
+    };
+    
+    playerDepositAddresses.set(playerId, playerData);
+    console.log(`Created deposit address for ${playerId}: ${playerData.address}`);
+    
+    return playerData.address;
+  }
+
+  // Watch blockchain for new deposits
+  async startWatching() {
+    console.log('Starting blockchain watcher...');
+    
+    setInterval(async () => {
+      await this.checkForDeposits();
+    }, 30000); // Check every 30 seconds
+  }
+
+  async checkForDeposits() {
+    try {
+      // Get recent transactions to game wallet
+      const signatures = await connection.getSignaturesForAddress(
+        gameWallet.publicKey,
+        { limit: 50 }
+      );
+
+      for (const sigInfo of signatures) {
+        if (this.knownSignatures.has(sigInfo.signature)) continue;
+        
+        const tx = await connection.getTransaction(sigInfo.signature);
+        if (!tx || !tx.meta) continue;
+
+        // Check if this is a deposit (incoming SOL)
+        const preBalance = tx.meta.preBalances[0] || 0;
+        const postBalance = tx.meta.postBalances[0] || 0;
+        const amount = (postBalance - preBalance) / LAMPORTS_PER_SOL;
+
+        if (amount > 0) {
+          // Find which player this belongs to
+          const fromAddress = tx.transaction.message.accountKeys[0]?.toString();
+          await this.processDeposit(fromAddress, amount, sigInfo.signature);
+        }
+
+        this.knownSignatures.add(sigInfo.signature);
+      }
+    } catch (err) {
+      console.error('Error checking deposits:', err);
+    }
+  }
+
+  async processDeposit(fromAddress, amount, signature) {
+    // Find player by matching deposit address
+    let playerId = null;
+    for (const [pid, data] of playerDepositAddresses) {
+      if (data.address === fromAddress) {
+        playerId = pid;
+        break;
+      }
+    }
+
+    if (!playerId) {
+      console.log(`Unknown deposit from ${fromAddress}: ${amount} SOL`);
+      return;
+    }
+
+    // Calculate credits (1 SOL = 100 credits)
+    const credits = amount * 100;
+    
+    // Update player balance
+    const playerData = playerDepositAddresses.get(playerId);
+    playerData.balance += credits;
+    playerData.solBalance = (playerData.solBalance || 0) + amount;
+    
+    console.log(`Auto-credited ${playerId}: ${amount} SOL = ${credits} credits`);
+    
+    // Here you would also update your game database
+    // await db.updatePlayerBalance(playerId, credits);
+  }
+
+  // Get player balance
+  getPlayerBalance(playerId) {
+    const data = playerDepositAddresses.get(playerId);
+    if (!data) return { sol: 0, credits: 0, address: this.getPlayerDepositAddress(playerId) };
+    return {
+      sol: data.solBalance || 0,
+      credits: data.balance || 0,
+      address: data.address
+    };
   }
 
   // Process withdrawal
@@ -82,13 +143,12 @@ class SolanaWallet {
       const recipient = new PublicKey(playerAddress);
       const lamports = solAmount * LAMPORTS_PER_SOL;
 
-      // Check game wallet balance
       const balance = await connection.getBalance(gameWallet.publicKey);
-      if (balance < lamports + 5000) { // 5000 for fees
+      if (balance < lamports + 5000) {
         return { success: false, error: 'Insufficient game funds' };
       }
 
-      // Create transaction
+      const { Transaction, SystemProgram } = require('@solana/web3.js');
       const transaction = new Transaction().add(
         SystemProgram.transfer({
           fromPubkey: gameWallet.publicKey,
@@ -97,26 +157,13 @@ class SolanaWallet {
         })
       );
 
-      // Sign and send
       const signature = await connection.sendTransaction(transaction, [gameWallet]);
       await connection.confirmTransaction(signature);
 
-      return {
-        success: true,
-        signature,
-        solAmount
-      };
-
+      return { success: true, signature, solAmount };
     } catch (err) {
-      console.error('Withdraw error:', err);
       return { success: false, error: err.message };
     }
-  }
-
-  // Get game wallet balance
-  async getGameBalance() {
-    const balance = await connection.getBalance(gameWallet.publicKey);
-    return balance / LAMPORTS_PER_SOL;
   }
 }
 
