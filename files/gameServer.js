@@ -1,18 +1,6 @@
 // gameServer.js
 //
 // Server-authoritative simulation for SlitherCash multiplayer.
-//
-// This intentionally mirrors the single-player client's simulation logic
-// (movement, bot AI, collision, orb economy, death/cash-out) so behavior
-// stays consistent between the modes you've already tuned. It does NOT do
-// any rendering — it just advances world state and produces compact
-// snapshots for broadcasting to clients.
-//
-// NOTE ON DUPLICATION: CFG below is intentionally a copy of the client's
-// CFG object. Once this moves into a real build pipeline (bundler/module
-// system), pull this into one shared config file imported by both the
-// client and the server so they can never drift out of sync. For this
-// first working version, keeping it a flat, readable copy is the priority.
 
 const CFG = {
   WORLD_RADIUS: 3700,
@@ -20,7 +8,7 @@ const CFG = {
   BASE_RADIUS: 6.5,
   MIN_LEN: 6,
   GROW_PER_ORB: 3.2,
-  NUM_BOTS: 50,
+  NUM_BOTS: 0,
   ORB_CAP: 700,
   LEN_PER_DOLLAR: 8,
   DEFAULT_BUYIN: 5,
@@ -31,10 +19,10 @@ const CFG = {
   TURN_RATE_BASE: 5.6,
   BOOST_DRAIN_INTERVAL: 0.11,
   GRID_CELL: 46,
-  TICK_RATE: 30, // server ticks per second
+  TICK_RATE: 30,
 };
 
-const SKIN_COUNT = 14; // must match client's SKINS.length
+const SKIN_COUNT = 14;
 
 function rand(a, b) { return a + Math.random() * (b - a); }
 function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -44,20 +32,6 @@ function toDollars(length) { return length / CFG.LEN_PER_DOLLAR; }
 function startLenForBuyin(buyin) {
   const b = clamp(buyin, CFG.MIN_BUYIN, CFG.MAX_BUYIN);
   return Math.max(8, b * CFG.LEN_PER_DOLLAR);
-}
-function randomBotBuyin() {
-  const r = Math.random();
-  if (r < 0.30) return rand(2, 8);
-  if (r < 0.60) return rand(8, 25);
-  if (r < 0.85) return rand(25, 60);
-  if (r < 0.97) return rand(60, 120);
-  return rand(120, 250);
-}
-
-const BOT_NAME_PARTS1 = ["Big","Lucky","Silk","Cold","High","Fast","Slick","Diamond","Royal","Iron","Neon","Velvet","Turbo","Ghost","Prime"];
-const BOT_NAME_PARTS2 = ["Roller","Stacker","Hustler","Baron","Whale","Grinder","Shark","Bandit","Ace","Fox","Viper","Comet","Dealer","Chip","Runner"];
-function randBotName() {
-  return BOT_NAME_PARTS1[(Math.random() * BOT_NAME_PARTS1.length) | 0] + BOT_NAME_PARTS2[(Math.random() * BOT_NAME_PARTS2.length) | 0];
 }
 
 function radiusFor(snake) {
@@ -78,12 +52,12 @@ let idCounter = 1;
 
 class GameWorld {
   constructor() {
-    this.snakes = new Map(); // id -> snake
+    this.snakes = new Map();
     this.orbs = [];
     this.grid = new Map();
     this.elapsed = 0;
-    this.events = []; // { type, targetId, data } — drained by the server layer each tick
-    for (let i = 0; i < CFG.NUM_BOTS; i++) this._spawnBot();
+    this.events = [];
+    // No bots spawned on start
   }
 
   _makeSnake({ id, name, isPlayer, skinIndex, startLen }) {
@@ -106,13 +80,6 @@ class GameWorld {
       bestRank: 999,
       ai: { wanderTimer: rand(0.5, 2), targetOrb: null },
     };
-  }
-
-  _spawnBot() {
-    const id = 'bot_' + (idCounter++);
-    const startLen = startLenForBuyin(randomBotBuyin());
-    const s = this._makeSnake({ id, name: randBotName(), isPlayer: false, skinIndex: (Math.random() * SKIN_COUNT) | 0, startLen });
-    this.snakes.set(id, s);
   }
 
   addPlayer({ id, name, buyin, skinIndex }) {
@@ -176,48 +143,6 @@ class GameWorld {
     }
   }
 
-  _botAI(snake, dt) {
-    const ai = snake.ai;
-    const head = snake.head;
-
-    const distFromCenter = Math.hypot(head.x, head.y);
-    if (distFromCenter > CFG.WORLD_RADIUS - 260) {
-      snake.targetAngle = Math.atan2(-head.y, -head.x);
-      ai.wanderTimer = 0.4;
-      return;
-    }
-
-    let threat = null, threatDist = 240 * 240;
-    for (const other of this.snakes.values()) {
-      if (other === snake || !other.alive) continue;
-      if (radiusFor(other) <= radiusFor(snake) * 1.05) continue;
-      const d2 = dist2(head.x, head.y, other.head.x, other.head.y);
-      if (d2 < threatDist) { threatDist = d2; threat = other; }
-    }
-    if (threat) {
-      snake.targetAngle = Math.atan2(head.y - threat.head.y, head.x - threat.head.x);
-      ai.wanderTimer = 0.3;
-      snake.boosting = Math.random() < 0.02;
-      return;
-    }
-
-    ai.wanderTimer -= dt;
-    if (ai.wanderTimer <= 0 || !ai.targetOrb) {
-      ai.wanderTimer = rand(0.6, 1.4);
-      let best = null, bestD = 480 * 480;
-      const sampleStep = Math.max(1, Math.floor(this.orbs.length / 60));
-      for (let i = 0; i < this.orbs.length; i += sampleStep) {
-        const o = this.orbs[i];
-        const d2 = dist2(head.x, head.y, o.x, o.y);
-        if (d2 < bestD) { bestD = d2; best = o; }
-      }
-      ai.targetOrb = best;
-      if (!best) snake.targetAngle = snake.angle + rand(-0.9, 0.9);
-    }
-    if (ai.targetOrb) snake.targetAngle = Math.atan2(ai.targetOrb.y - head.y, ai.targetOrb.x - head.x);
-    snake.boosting = false;
-  }
-
   _buildGrid() {
     this.grid.clear();
     for (const s of this.snakes.values()) {
@@ -228,15 +153,11 @@ class GameWorld {
         const key = Math.floor(p.x / CFG.GRID_CELL) + ',' + Math.floor(p.y / CFG.GRID_CELL);
         let arr = this.grid.get(key);
         if (!arr) { arr = []; this.grid.set(key, arr); }
-        // The first couple of trail points sit essentially on top of the head.
-        // Flag them so head-on encounters aren't mistaken for body hits — otherwise
-        // two snakes meeting face-to-face each "hit the other's body" and BOTH die.
         arr.push({ ownerId: s.id, x: p.x, y: p.y, r, isHead: i <= 2 });
       }
     }
   }
 
-  /** Body collision only — head-region points are ignored here (see _checkHeadOn). */
   _checkCollision(snake) {
     const r = radiusFor(snake);
     const cx = Math.floor(snake.head.x / CFG.GRID_CELL);
@@ -247,7 +168,7 @@ class GameWorld {
         if (!arr) continue;
         for (const entry of arr) {
           if (entry.ownerId === snake.id) continue;
-          if (entry.isHead) continue; // handled by _checkHeadOn
+          if (entry.isHead) continue;
           const minDist = r * 0.72 + entry.r * 0.72;
           if (dist2(snake.head.x, snake.head.y, entry.x, entry.y) < minDist * minDist) return entry.ownerId;
         }
@@ -256,11 +177,6 @@ class GameWorld {
     return null;
   }
 
-  /**
-   * Head-to-head resolution, slither.io style: when two heads meet, the SMALLER
-   * snake dies and the bigger one survives (and eats the drop). Only a near-exact
-   * tie kills both. Returns an array of [snake, killerName] pairs to kill.
-   */
   _resolveHeadOnCollisions() {
     const alive = Array.from(this.snakes.values()).filter(s => s.alive);
     const deaths = [];
@@ -272,14 +188,12 @@ class GameWorld {
         const ra = radiusFor(a), rb = radiusFor(b);
         const minDist = ra * 0.72 + rb * 0.72;
         if (dist2(a.head.x, a.head.y, b.head.x, b.head.y) >= minDist * minDist) continue;
-
         const ratio = a.length / b.length;
         if (ratio > 1.05) {
           if (!doomed.has(b.id)) { doomed.add(b.id); deaths.push([b, a.name]); }
         } else if (ratio < 0.95) {
           if (!doomed.has(a.id)) { doomed.add(a.id); deaths.push([a, b.name]); }
         } else {
-          // near-identical size: mutual destruction, same as slither.io
           if (!doomed.has(a.id)) { doomed.add(a.id); deaths.push([a, b.name]); }
           if (!doomed.has(b.id)) { doomed.add(b.id); deaths.push([b, a.name]); }
         }
@@ -319,11 +233,9 @@ class GameWorld {
         targetId: snake.id,
         data: { killerName: killerName || null, buyin: snake.buyin, bestRank: snake.bestRank, coinsEaten: snake.coinsEaten },
       });
-      this.snakes.delete(snake.id);
-    } else {
-      this.snakes.delete(snake.id);
-      setTimeout(() => { if (!this._stopped) this._spawnBot(); }, rand(1500, 3500));
     }
+    // No bot respawn — bots are disabled entirely
+    this.snakes.delete(snake.id);
   }
 
   tick(dt) {
@@ -331,14 +243,11 @@ class GameWorld {
 
     for (const s of this.snakes.values()) {
       if (!s.alive) continue;
-      if (!s.isPlayer) this._botAI(s, dt);
       this._updateMotion(s, dt);
     }
 
     this._buildGrid();
 
-    // Head-to-head first, so a face-to-face meeting is judged by size rather
-    // than both snakes registering a "body hit" on each other and both dying.
     for (const [victim, killerName] of this._resolveHeadOnCollisions()) {
       if (victim.alive) this._kill(victim, killerName);
     }
@@ -362,7 +271,6 @@ class GameWorld {
 
   stop() { this._stopped = true; }
 
-  /** Compact snapshot for network broadcast — no per-snake point trails (clients rebuild trails locally from head motion). */
   snapshot() {
     const snakes = [];
     for (const s of this.snakes.values()) {
@@ -378,6 +286,11 @@ class GameWorld {
     return { snakes, orbs, elapsed: round3(this.elapsed) };
   }
 }
+
+function round1(n) { return Math.round(n * 10) / 10; }
+function round3(n) { return Math.round(n * 1000) / 1000; }
+
+module.exports = { GameWorld, CFG };
 
 function round1(n) { return Math.round(n * 10) / 10; }
 function round3(n) { return Math.round(n * 1000) / 1000; }
