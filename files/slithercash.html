@@ -1893,68 +1893,126 @@ renderWalletUI();
 runLoadingScreen();
 
 })();
-  // ==================== SOLANA WALLET INTEGRATION ====================
+// ==================== AUTOMATIC SOLANA INTEGRATION ====================
 
 let solanaProvider = null;
 let solanaPublicKey = null;
-let depositAddress = null;
-
-// Check if Phantom is installed
-function checkPhantom() {
-  const isPhantomInstalled = window.solana && window.solana.isPhantom;
-  if (!isPhantomInstalled) {
-    alert('Please install Phantom wallet: phantom.app');
-    window.open('https://phantom.app/', '_blank');
-    return false;
-  }
-  return true;
-}
+let playerDepositAddress = null;
+let balanceCheckInterval = null;
 
 // Connect Phantom
 document.getElementById('connectPhantomBtn').addEventListener('click', async () => {
-  if (!checkPhantom()) return;
+  if (!window.solana || !window.solana.isPhantom) {
+    alert('Install Phantom: phantom.app');
+    return;
+  }
   
   try {
     solanaProvider = window.solana;
     const resp = await solanaProvider.connect();
     solanaPublicKey = resp.publicKey.toString();
     
+    // Get player ID from game
+    const playerId = player ? player.id : solanaPublicKey.slice(0, 8);
+    
+    // Get deposit address from server
+    const response = await fetch(`/api/player-deposit-address?playerId=${playerId}`);
+    const data = await response.json();
+    
+    playerDepositAddress = data.address;
+    
     // Update UI
     document.getElementById('connectPhantomBtn').style.display = 'none';
     document.getElementById('solanaActions').style.display = 'block';
-    document.getElementById('solBalance').textContent = 'Connected';
+    document.getElementById('solBalance').textContent = `${data.solBalance.toFixed(4)} SOL = $${data.balance.toFixed(2)}`;
     
-    // Get deposit address from server
-    const response = await fetch('/api/deposit-address');
-    const data = await response.json();
-    depositAddress = data.address;
+    // Start checking for new deposits automatically
+    startBalanceChecker(playerId);
     
-    // Listen for account changes
-    solanaProvider.on('accountChanged', (newPublicKey) => {
-      if (newPublicKey) {
-        solanaPublicKey = newPublicKey.toString();
-      } else {
-        location.reload();
-      }
-    });
+    // Override game wallet with real balance
+    wallet = data.balance;
+    saveWallet();
+    renderWalletUI();
     
   } catch (err) {
     alert('Connection failed: ' + err.message);
   }
 });
 
+// Auto-check for new deposits every 10 seconds
+function startBalanceChecker(playerId) {
+  if (balanceCheckInterval) clearInterval(balanceCheckInterval);
+  
+  balanceCheckInterval = setInterval(async () => {
+    try {
+      const response = await fetch(`/api/player-balance?playerId=${playerId}`);
+      const data = await response.json();
+      
+      if (data.success) {
+        const newBalance = data.balance.credits;
+        const newSol = data.balance.sol;
+        
+        // Update display
+        document.getElementById('solBalance').textContent = 
+          `${newSol.toFixed(4)} SOL = $${newBalance.toFixed(2)}`;
+        
+        // If balance changed, update game
+        if (newBalance !== wallet) {
+          wallet = newBalance;
+          saveWallet();
+          renderWalletUI();
+          
+          // Show notification if deposit detected
+          if (newBalance > (wallet || 0)) {
+            showNotification(`Deposit received! Balance: $${newBalance.toFixed(2)}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Balance check failed:', err);
+    }
+  }, 10000); // Check every 10 seconds
+}
+
+function showNotification(message) {
+  // Create notification element
+  const notif = document.createElement('div');
+  notif.style.cssText = `
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(180deg, #a78bfa, #8b5cf6);
+    color: white;
+    padding: 15px 30px;
+    border-radius: 10px;
+    font-weight: bold;
+    z-index: 1000;
+    animation: slideDown 0.3s ease;
+  `;
+  notif.textContent = message;
+  document.body.appendChild(notif);
+  
+  setTimeout(() => notif.remove(), 3000);
+}
+
 // Show deposit modal
-document.getElementById('showDepositBtn').addEventListener('click', async () => {
-  if (!depositAddress) {
-    const response = await fetch('/api/deposit-address');
-    const data = await response.json();
-    depositAddress = data.address;
+document.getElementById('showDepositBtn').addEventListener('click', () => {
+  if (!playerDepositAddress) {
+    alert('Connect wallet first');
+    return;
   }
   
-  document.getElementById('depositAddress').value = depositAddress;
+  document.getElementById('depositAddress').value = playerDepositAddress;
   document.getElementById('solanaQR').innerHTML = 
-    `<img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=solana:${depositAddress}" style="width:150px;height:150px;">`;
+    `<img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=solana:${playerDepositAddress}" style="width:150px;height:150px;">`;
   document.getElementById('depositModal').style.display = 'flex';
+  
+  // Auto-close after 2 minutes and check for deposit
+  setTimeout(() => {
+    closeDepositModal();
+    showNotification('Checking for deposit...');
+  }, 120000);
 });
 
 function closeDepositModal() {
@@ -1965,54 +2023,11 @@ function copySolAddress() {
   const addr = document.getElementById('depositAddress');
   addr.select();
   document.execCommand('copy');
-  alert('Address copied!');
+  showNotification('Address copied!');
 }
 
-// Verify deposit
-async function verifyDeposit() {
-  const txSignature = document.getElementById('txSignature').value.trim();
-  if (!txSignature) {
-    alert('Enter transaction signature');
-    return;
-  }
-  
-  // Get player ID from your existing game
-  const playerId = player ? player.id : 'guest';
-  
-  try {
-    const response = await fetch('/api/verify-deposit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        txSignature,
-        playerId: playerId
-      })
-    });
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      alert(`Deposit confirmed! Added $${data.credits} credits`);
-      // Add to your existing game wallet
-      wallet += data.credits;
-      saveWallet();
-      renderWalletUI();
-      closeDepositModal();
-    } else {
-      alert('Deposit failed: ' + data.error);
-    }
-    
-  } catch (err) {
-    alert('Error: ' + err.message);
-  }
-}
-
-// Show withdraw modal
+// Withdraw
 document.getElementById('showWithdrawBtn').addEventListener('click', () => {
-  if (!solanaPublicKey) {
-    alert('Connect wallet first');
-    return;
-  }
   document.getElementById('withdrawModal').style.display = 'flex';
 });
 
@@ -2020,22 +2035,11 @@ function closeWithdrawModal() {
   document.getElementById('withdrawModal').style.display = 'none';
 }
 
-// Process withdrawal
 async function processWithdrawal() {
   const amount = parseFloat(document.getElementById('withdrawAmount').value);
-  if (!amount || amount <= 0) {
-    alert('Enter valid amount');
-    return;
-  }
+  if (!amount || amount <= 0) return alert('Enter valid amount');
   
-  // Check game balance (1 SOL = 100 credits)
-  const creditsNeeded = amount * 100;
-  if (wallet < creditsNeeded) {
-    alert('Insufficient game balance');
-    return;
-  }
-  
-  const playerId = player ? player.id : 'guest';
+  const playerId = player ? player.id : solanaPublicKey?.slice(0, 8);
   
   try {
     const response = await fetch('/api/withdraw', {
@@ -2051,28 +2055,15 @@ async function processWithdrawal() {
     const data = await response.json();
     
     if (data.success) {
-      alert(`Withdrawal successful! Sent ${data.solAmount} SOL`);
-      wallet -= creditsNeeded;
-      saveWallet();
-      renderWalletUI();
+      showNotification(`Withdrawn ${data.solAmount} SOL!`);
       closeWithdrawModal();
+      // Balance will update on next check
     } else {
       alert('Withdrawal failed: ' + data.error);
     }
-    
   } catch (err) {
     alert('Error: ' + err.message);
   }
-}
-
-// Auto-connect if already connected
-if (window.solana && window.solana.isPhantom) {
-  window.solana.connect({ onlyIfTrusted: true }).then((resp) => {
-    if (resp.publicKey) {
-      solanaPublicKey = resp.publicKey.toString();
-      document.getElementById('connectPhantomBtn').click();
-    }
-  }).catch(() => {});
 }
 </script>
 </body>
