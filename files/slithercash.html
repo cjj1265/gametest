@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1492,7 +1493,9 @@ function connectAndJoin(name, buyin, skinIndex){
         netYouId = msg.id;
         if(msg.cfg){
           CFG.WORLD_RADIUS = msg.cfg.WORLD_RADIUS;
-          CFG.LEN_PER_DOLLAR = msg.cfg.LEN_PER_DOLLAR;
+          if(msg.cfg.WORLD_RADIUS) CFG.WORLD_RADIUS = msg.cfg.WORLD_RADIUS;
+          // Do NOT overwrite LEN_PER_DOLLAR from the server — doing so corrupts
+          // the client's dollar display (caused the "$5 becomes $1.30" bug).
         }
         resolve();
         return;
@@ -1770,9 +1773,13 @@ document.getElementById('skinDoneBtn').addEventListener('click', ()=>{
 async function startGame(){
   const name = nameInput.value.trim() || randName();
   let buyin = parseFloat(buyinInput.value);
-  if(isNaN(buyin) || buyin <= 0) buyin = CFG.DEFAULT_BUYIN;
+  if(isNaN(buyin) || buyin <= 0){
+    alert('Please enter a buy-in amount greater than $0 to play.');
+    buyinInput.focus();
+    return;
+  }
   buyin = clamp(buyin, CFG.MIN_BUYIN, CFG.MAX_BUYIN);
-  buyinInput.value = buyin;
+  buyinInput.value = buyin.toFixed(2);
 
   playBtn.disabled = true;
   playBtn.textContent = 'Connecting...';
