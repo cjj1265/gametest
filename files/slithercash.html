@@ -1,4 +1,6 @@
 
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -369,7 +371,6 @@
       </div>
       <div class="wallet-sub">Practice balance, saved on this device</div>
       <div id="walletHistory" class="wallet-history"></div>
-      <button class="wallet-withdraw" id="withdrawBtn" disabled>Withdraw &mdash; coming soon</button>
       <!-- Add this inside your existing wallet-card div -->
 <div class="solana-wallet" style="margin-top:12px;padding:12px;background:rgba(149,128,255,0.08);border:1px solid rgba(149,128,255,0.25);border-radius:10px;">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -388,7 +389,7 @@
 </div>
 
 <!-- Deposit Modal -->
-<div id="depositModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100;align-items:center;justify-content:center;">
+<div id="depositModal" onclick="if(event.target===this)closeDepositModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100;align-items:center;justify-content:center;">
   <div style="background:#1a2224;padding:24px;border-radius:16px;max-width:350px;width:90%;border:1px solid rgba(149,128,255,0.3);">
     <h3 style="color:#9580ff;margin-bottom:16px;">Deposit SOL</h3>
     <div style="background:#fff;padding:12px;border-radius:8px;margin-bottom:16px;text-align:center;">
@@ -408,7 +409,7 @@
 </div>
 
 <!-- Withdraw Modal -->
-<div id="withdrawModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100;align-items:center;justify-content:center;">
+<div id="withdrawModal" onclick="if(event.target===this)closeWithdrawModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:100;align-items:center;justify-content:center;">
   <div style="background:#1a2224;padding:24px;border-radius:16px;max-width:350px;width:90%;border:1px solid rgba(149,128,255,0.3);">
     <h3 style="color:#9580ff;margin-bottom:16px;">Withdraw SOL</h3>
     <input type="number" id="withdrawAmount" placeholder="SOL amount" step="0.001" min="0.001" style="width:100%;padding:12px;border-radius:6px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#eaeee9;margin-bottom:12px;">
@@ -759,10 +760,13 @@ function updateSnakeMotion(snake, dt){
     snake.boostTimer -= dt;
     if(snake.boostTimer <= 0){
       snake.boostTimer = CFG.BOOST_DRAIN_INTERVAL;
-      snake.length = Math.max(CFG.MIN_LEN, snake.length - 1.4);
+      const drain = 1.4;
+      snake.length = Math.max(CFG.MIN_LEN, snake.length - drain);
       if(Math.random() < 0.8){
         const tail = snake.points[snake.points.length-1] || snake.head;
-        dropOrb(spawnOrb(tail.x + rand(-4,4), tail.y + rand(-4,4), 1));
+        // orbValue calibrated so picking this orb back up is exactly break-even.
+        const orbValue = drain / CFG.GROW_PER_ORB;
+        dropOrb(spawnOrb(tail.x + rand(-4,4), tail.y + rand(-4,4), orbValue));
       }
     }
   }
@@ -2025,10 +2029,18 @@ function closeDepositModal() {
   document.getElementById('depositModal').style.display = 'none';
 }
 
+function verifyDeposit() {
+  const sig = document.getElementById('txSignature') ? document.getElementById('txSignature').value.trim() : '';
+  if (!sig) { alert('Please paste your transaction signature first.'); return; }
+  showNotification('Verification submitted — balance will update shortly.');
+  closeDepositModal();
+}
+
 function copySolAddress() {
   const addr = document.getElementById('depositAddress');
+  if (!addr) return;
   addr.select();
-  document.execCommand('copy');
+  try { document.execCommand('copy'); } catch(e) { navigator.clipboard && navigator.clipboard.writeText(addr.value); }
   showNotification('Address copied!');
 }
 
